@@ -2,13 +2,17 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('webby-plugin-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Force $testRoot)
-$pluginPath = $root.Replace('\','/')
+$pluginPath = ([uri]($root + '\')).AbsoluteUri.TrimEnd('/')
 $config = @{plugins=@($pluginPath)} | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $testRoot 'opencode.json'), $config, [Text.UTF8Encoding]::new($false))
 $binary = Join-Path $root '.tools/package/bin/opencode.exe'
 if (-not (Test-Path $binary)) { throw 'OpenCode v2.2.0 test binary is missing' }
 $stdout = Join-Path $testRoot 'server.log'; $stderr = Join-Path $testRoot 'server-error.log'
-$server = Start-Process -FilePath $binary -WorkingDirectory $testRoot -ArgumentList @('serve','--hostname','127.0.0.1','--port','4198') -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+$previousConfigRoot = $env:XDG_CONFIG_HOME
+$env:XDG_CONFIG_HOME = Join-Path $testRoot 'config'
+try {
+    $server = Start-Process -FilePath $binary -WorkingDirectory $testRoot -ArgumentList @('serve','--hostname','127.0.0.1','--port','4198') -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+} finally { $env:XDG_CONFIG_HOME = $previousConfigRoot }
 try {
     $deadline = [datetime]::UtcNow.AddSeconds(25); $password = $null
     do {

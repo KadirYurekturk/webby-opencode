@@ -7,16 +7,20 @@ import path from 'node:path'
 export default {
   id: 'webby',
   setup(ctx) {
-    if (process.platform !== 'win32') return
-    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'Spider.ps1')
-    const child = spawn('powershell.exe', [
+    if (!['win32', 'linux', 'darwin'].includes(process.platform)) return
+    if (process.platform === 'linux' && !process.env.DISPLAY) return
+    const root = path.dirname(fileURLToPath(import.meta.url))
+    const windows = process.platform === 'win32'
+    const command = windows ? 'powershell.exe' : 'python3'
+    const args = windows ? [
       '-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-      '-File', script, '-PluginMode', '-ProjectDirectory', ctx.location.directory,
-    ], { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] })
+      '-File', path.join(root, 'Spider.ps1'), '-PluginMode', '-ProjectDirectory', ctx.location.directory,
+    ] : [path.join(root, 'src', 'desktop.py')]
+    const child = spawn(command, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] })
     const controller = new AbortController()
     let closed = false
-    child.on('error', () => { closed = true; controller.abort() })
-    child.on('exit', () => { closed = true; controller.abort() })
+    child.on('error', () => { if (!closed) console.warn('Webby could not start; see the README for platform requirements.'); closed = true; controller.abort() })
+    child.on('exit', (code) => { if (!closed && code !== 0) console.warn('Webby exited unexpectedly; see the README for platform requirements.'); closed = true; controller.abort() })
     child.stdin.on('error', () => { closed = true; controller.abort() })
     function send(event) {
       if (closed || !child.stdin.writable) return

@@ -3,3 +3,5 @@
 *.local.*
 test-output/
 .codex-attachments/
+__pycache__/
+*.pyc

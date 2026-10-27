@@ -1,23 +1,27 @@
 # Webby — OpenCode Spider
 
-A small **OpenCode v2** desktop companion for Windows. A mint-eyed pixel spider hangs from a silk thread at the top edge, or perches above the taskbar. No enclosing card, permanent title bar, or taskbar button.
+A small **OpenCode v2** desktop companion for Windows, Ubuntu and macOS. A mint-eyed pixel spider hangs from a silk thread at the top edge, or perches near the bottom edge.
 
 ![Webby hanging from a silk thread](docs/preview.png)
 
 ## Install as an OpenCode v2 plugin
 
-1. Download the Windows ZIP from [Releases](https://github.com/kadiryurekturk/webby-opencode/releases) or clone the repository, and keep it in a permanent folder such as `C:/Tools/webby-opencode`.
+1. Download the archive for your platform from [Releases](https://github.com/kadiryurekturk/webby-opencode/releases) or clone the repository, and keep it in a permanent folder, for example `C:/Tools/webby-opencode` on Windows.
 2. Add that **directory** to the `plugins` array in the project's `opencode.json`, or in `%USERPROFILE%\.config\opencode\opencode.json` for global use. Create the file if needed; keep existing settings and plugins:
 
 ```json
 {
-  "plugins": ["C:/Tools/webby-opencode"]
+  "plugins": ["file:///C:/Tools/webby-opencode"]
 }
 ```
 
-Replace the path with the folder containing `index.js` and `Spider.ps1`. Use forward slashes or escaped backslashes in JSON. Restart OpenCode after editing the configuration. Webby starts when the plugin loads; no separate CMD or server password is needed. OpenCode Desktop loads globally configured server plugins; CLI project configuration applies to that project.
+Replace the URI with the absolute folder containing `index.js` and `Spider.ps1`. Use the `file:///` prefix and forward slashes on Windows; encode spaces as `%20`. JSON strings must have exactly one pair of double quotes. For example, `file:///C:/Users/Zims/.webby-opencode` is a valid local plugin URI. Restart OpenCode after editing the configuration. Webby starts when the plugin loads; no separate CMD or server password is needed. OpenCode Desktop loads globally configured server plugins; CLI project configuration applies to that project.
 
-The Windows plugin starts the WPF companion as its child and subscribes to the v2 event API over an in-memory local pipe. OpenCode may keep its shared server running after a TUI closes, so Webby follows the plugin/server lifetime, not necessarily one terminal window. Quit using the tray menu or unload the plugin to stop it. Exit an older standalone/demo instance before enabling the plugin: only one desktop instance runs at a time. If multiple locations load the plugin, the first active instance owns the desktop mascot.
+On Ubuntu and macOS, extract the respective release archive and use an absolute URI such as `file:///home/you/.webby-opencode` or `file:///Users/you/.webby-opencode`. The global config is `~/.config/opencode/opencode.json` (or `$XDG_CONFIG_HOME/opencode/opencode.json` when set). Local paths and `file:///` directory URIs are supported by the v2 loader; the latter was verified with OpenCode 2.2.0 on Windows.
+
+Ubuntu needs Python 3, Tkinter, GTK/X11 desktop libraries and an X11 display (including XWayland). Install the standard Tk package with `sudo apt install python3 python3-tk`. For macOS install Python 3 with Tk support; verify with `python3 -c 'import tkinter'`. The executable must be available as `python3` in the OpenCode server's PATH. Headless servers and remote servers do not display a mascot on the local computer.
+
+The plugin starts a local desktop companion and subscribes to the v2 event API over an in-memory local pipe. OpenCode may keep its shared server running after a TUI closes, so Webby follows the plugin/server lifetime, not necessarily one terminal window. On Windows, quit using the tray menu or unload the plugin; exit an older standalone/demo instance before enabling it. The Windows single-instance lock means the first active location owns the mascot. Ubuntu/macOS use right-click (or two-finger click) and Close Webby or Escape; each loaded location may launch an instance.
 
 This is a local-directory plugin, not an npm-published package. Its dependency-free v2 `{ id, setup }` object is equivalent to `Plugin.define` and avoids local `@opencode/plugin` resolution failures in some releases. See the [v2 server plugin documentation](https://opencode.ai/v2/docs/build/plugins/server/) and [v2.2.0 test plugin](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/server/test/fixture/worktree-plugin/index.ts).
 
@@ -27,7 +31,7 @@ This is a local-directory plugin, not an npm-published package. Its dependency-f
 
 **Demo.cmd** cycles through the visual states without connecting to OpenCode. If Webby is already running, exit it from the tray before starting the demo; only one interactive instance runs at a time.
 
-**Requirements:** Windows 10/11 desktop, built-in **Windows PowerShell 5.1**, WPF/.NET Framework, and OpenCode v2 for live status. No Python, Node.js, Electron, npm packages, or separate compiler installation is required for Webby. Its small C# helpers compile in memory using `Add-Type`.
+**Windows requirements:** Windows 10/11 desktop, built-in **Windows PowerShell 5.1**, WPF/.NET Framework, and OpenCode v2 for live status. No Python, Node.js, Electron, npm packages, or separate compiler installation is required for Webby on Windows. Its small C# helpers compile in memory using `Add-Type`.
 Use `powershell.exe`, not PowerShell 7. Organizational restrictions on PowerShell or `Add-Type` may prevent startup.
 
 ## Standalone connection
@@ -60,6 +64,8 @@ $env:OPENCODE_PASSWORD = $credential.GetNetworkCredential().Password
 Use `OPENCODE_SERVER_USERNAME` only if your server uses another username. Webby accepts loopback HTTP(S) server roots only and does not follow redirects. Credentials are never written to Webby's settings or logs.
 
 ## Interactions
+
+The table describes Windows. Ubuntu/macOS currently support hanging/perching, dragging, a right-click menu, motion toggle, status and response-word animation; Windows-only features include tray, click-to-focus, persisted settings and startup shortcut. Bottom placement on Ubuntu/macOS is relative to the screen edge rather than a detected taskbar/dock.
 
 | Action | Result |
 | --- | --- |
@@ -107,7 +113,7 @@ Local preferences contain your selected project path. `%LOCALAPPDATA%\Webby\webb
 
 ## Verification
 
-The event contract targets **OpenCode v2**. OpenCode **v2.2.0** loaded the local plugin and launched the Windows companion in an integration check. The original authenticated standalone SSE integration was also checked with v2.2.0. No paid model run or live TUI/GUI response animation was exercised.
+The event contract targets **OpenCode v2**. OpenCode **v2.2.0** loaded a `file:///` local plugin and launched the Windows companion in an integration check. Ubuntu 24.04 WSLg was used for a Tk/X11 window and event smoke test. macOS has not been tested on a Mac; native transparency and desktop behavior there remain experimental. No paid model run or live TUI/GUI response animation was exercised.
 
 ```powershell
 # State transitions, discovery, URL validation, docking and preferences:
@@ -134,6 +140,7 @@ References: [v2 HTTP API](https://opencode.ai/v2/docs/api), [v2.2.0 session even
 - `src/Launch-OpenCode.ps1`: explicit user-requested terminal launch.
 - `src/EventStream.cs`: background SSE transport.
 - `index.js` and `src/PluginStream.cs`: v2 plugin lifecycle and local event pipe.
+- `src/desktop.py`: Ubuntu/macOS Tk companion; no pip packages.
 - `assets/webby.png`: generated transparent pixel sprite.
 
 MIT licensed.
