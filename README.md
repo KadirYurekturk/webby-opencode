@@ -4,18 +4,33 @@ A small **OpenCode v2** desktop companion for Windows. A mint-eyed pixel spider 
 
 ![Webby hanging from a silk thread](docs/preview.png)
 
-## Quick start
+## Install as an OpenCode v2 plugin
 
-1. Download the Windows ZIP from [Releases](https://github.com/kadiryurekturk/webby-opencode/releases) and extract it into a permanent folder.
-2. Double-click **Start-Spider.cmd**. Webby discovers the local background service used by a normal OpenCode v2 TUI.
-3. Right-click the spider or its system tray icon and choose **Choose project folder...** once. This is the folder used when Webby needs to open a new OpenCode terminal.
+1. Download the Windows ZIP from [Releases](https://github.com/kadiryurekturk/webby-opencode/releases) or clone the repository, and keep it in a permanent folder such as `C:/Tools/webby-opencode`.
+2. Add that **directory** to the `plugins` array in the project's `opencode.json`, or in `%USERPROFILE%\.config\opencode\opencode.json` for global use. Create the file if needed; keep existing settings and plugins:
+
+```json
+{
+  "plugins": ["C:/Tools/webby-opencode"]
+}
+```
+
+Replace the path with the folder containing `index.js` and `Spider.ps1`. Use forward slashes or escaped backslashes in JSON. Restart OpenCode after editing the configuration. Webby starts when the plugin loads; no separate CMD or server password is needed. OpenCode Desktop loads globally configured server plugins; CLI project configuration applies to that project.
+
+The Windows plugin starts the WPF companion as its child and subscribes to the v2 event API over an in-memory local pipe. OpenCode may keep its shared server running after a TUI closes, so Webby follows the plugin/server lifetime, not necessarily one terminal window. Quit using the tray menu or unload the plugin to stop it. Exit an older standalone/demo instance before enabling the plugin: only one desktop instance runs at a time. If multiple locations load the plugin, the first active instance owns the desktop mascot.
+
+This is a local-directory plugin, not an npm-published package. Its dependency-free v2 `{ id, setup }` object is equivalent to `Plugin.define` and avoids local `@opencode/plugin` resolution failures in some releases. See the [v2 server plugin documentation](https://opencode.ai/v2/docs/build/plugins/server/) and [v2.2.0 test plugin](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/server/test/fixture/worktree-plugin/index.ts).
+
+## Standalone and demo
+
+`Start-Spider.cmd` remains available for standalone use. Right-click the spider or its system tray icon and choose **Choose project folder...** for the terminal-launch action.
 
 **Demo.cmd** cycles through the visual states without connecting to OpenCode. If Webby is already running, exit it from the tray before starting the demo; only one interactive instance runs at a time.
 
 **Requirements:** Windows 10/11 desktop, built-in **Windows PowerShell 5.1**, WPF/.NET Framework, and OpenCode v2 for live status. No Python, Node.js, Electron, npm packages, or separate compiler installation is required for Webby. Its small C# helpers compile in memory using `Add-Type`.
 Use `powershell.exe`, not PowerShell 7. Organizational restrictions on PowerShell or `Add-Type` may prevent startup.
 
-## How it connects
+## Standalone connection
 
 By default, Webby reads the OpenCode v2 service registration at:
 
@@ -92,7 +107,7 @@ Local preferences contain your selected project path. `%LOCALAPPDATA%\Webby\webb
 
 ## Verification
 
-The event contract targets **OpenCode v2**. The original authenticated live SSE integration was checked with **v2.2.0**; service-discovery fields were checked against that version's source. This release uses three focused checks:
+The event contract targets **OpenCode v2**. OpenCode **v2.2.0** loaded the local plugin and launched the Windows companion in an integration check. The original authenticated standalone SSE integration was also checked with v2.2.0. No paid model run or live TUI/GUI response animation was exercised.
 
 ```powershell
 # State transitions, discovery, URL validation, docking and preferences:
@@ -101,9 +116,11 @@ powershell.exe -NoProfile -File tests/state.tests.ps1
 powershell.exe -NoProfile -File tests/stream.tests.ps1
 # Native WPF startup, both layouts and isolated click route:
 powershell.exe -NoProfile -STA -File Spider.ps1 -Demo -SmokeTest
+# Optional local integration test; requires the v2.2.0 test binary in .tools/package/bin:
+powershell.exe -NoProfile -File tests/plugin-live.tests.ps1
 ```
 
-All three passed. No paid model run, live click-to-focus action, startup-shortcut activation, or mixed-DPI multi-monitor interaction was exercised for this release. The UI smoke test avoids changing user settings or launching terminals. Other v2 releases must expose the same event contract.
+State/SSE tests, plugin-mode WPF smoke, and the v2.2.0 plugin load test passed. Live click-to-focus, startup-shortcut activation, and mixed-DPI multi-monitor interaction were not exercised. The UI smoke test avoids changing user settings or launching terminals. Other v2 releases must expose the same event contract.
 
 References: [v2 HTTP API](https://opencode.ai/v2/docs/api), [v2.2.0 session events](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/schema/src/session-event.ts), [permission events](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/schema/src/permission.ts), [service registration schema](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/client/src/service.ts).
 
@@ -116,6 +133,7 @@ References: [v2 HTTP API](https://opencode.ai/v2/docs/api), [v2.2.0 session even
 - `src/Native.cs`: Windows foreground-window helper.
 - `src/Launch-OpenCode.ps1`: explicit user-requested terminal launch.
 - `src/EventStream.cs`: background SSE transport.
+- `index.js` and `src/PluginStream.cs`: v2 plugin lifecycle and local event pipe.
 - `assets/webby.png`: generated transparent pixel sprite.
 
 MIT licensed.

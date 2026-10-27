@@ -1,7 +1,7 @@
 param(
     [string]$ServerUrl, [string]$ServiceFile,
     [string]$ProjectDirectory = (Get-Location).Path,
-    [switch]$Demo, [switch]$SmokeTest, [string]$PreviewPath
+    [switch]$Demo, [switch]$SmokeTest, [string]$PreviewPath, [switch]$PluginMode
 )
 $ErrorActionPreference = 'Stop'
 $script:stream = $null; $script:tray = $null; $script:mutex = $null
@@ -12,7 +12,8 @@ try {
     . "$PSScriptRoot/src/Desktop.ps1"
     . "$PSScriptRoot/src/Activity.ps1"
     Add-Type -Path "$PSScriptRoot/src/Native.cs"
-    if (-not $Demo) { Add-Type -Path "$PSScriptRoot/src/EventStream.cs" }
+    if ($PluginMode) { [Console]::InputEncoding = [Text.UTF8Encoding]::new($false); Add-Type -Path "$PSScriptRoot/src/PluginStream.cs" }
+    elseif (-not $Demo) { Add-Type -Path "$PSScriptRoot/src/EventStream.cs" }
     if (-not $ServiceFile) { $ServiceFile = Get-WebbyServiceFile }
     if ($ServerUrl) { $null = Get-WebbyEndpoint $ServerUrl $ServiceFile }
     if (-not (Test-Path -LiteralPath $ProjectDirectory -PathType Container)) { throw 'Project folder does not exist.' }
@@ -185,8 +186,9 @@ try {
     $tray.ContextMenuStrip = $menu; $tray.Add_DoubleClick({ $window.Show(); Open-OpenCode })
     $spider.Add_MouseRightButtonUp({ $menu.Show([Windows.Forms.Cursor]::Position); $_.Handled = $true })
     if (-not $isolated) { $tray.Visible = $true }
+    if ($PluginMode) { $script:stream = [WebbyPluginStream]::new() }
     function Update-Connection {
-        if ($Demo -or $isolated) { return }
+        if ($Demo -or $isolated -or $PluginMode) { return }
         if (([datetime]::UtcNow - $lastDiscover).TotalSeconds -lt 3) { return }
         $script:lastDiscover = [datetime]::UtcNow; $next = Get-WebbyEndpoint $ServerUrl $ServiceFile
         $different = ($null -eq $next) -ne ($null -eq $endpoint)
@@ -210,6 +212,7 @@ try {
                 } catch { }
                 $count++
             }
+            if ($PluginMode -and $stream.Closed) { $window.Close(); return }
         }
         $mood = Get-SpiderMood $state
         if ($Demo) { $mood = 'working' }
