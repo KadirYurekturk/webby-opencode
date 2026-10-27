@@ -70,9 +70,9 @@ While OpenCode works, Webby casts a short silk line toward a nearby word, then r
 
 ![Webby catching an activity word](docs/activity-preview.png)
 
-Words come from a fixed vocabulary based on `session.tool.input.started` and `session.reasoning.started`: `read`, `search`, `edit`, `test`, `run`, `tool`, and `think`. Shell commands are labeled `run`; Webby does not inspect their contents to infer tests. Custom tool names become `tool`. These events describe preparation/reasoning activity, not proof of a successful tool execution.
+Webby also takes short words from assistant response text events (`session.text.delta`). When no response word is pending, fixed activity labels such as `read`, `search`, and `think` can appear. Words are transient in memory and may be visible to anyone watching your screen; they are not written to disk. Avoid using this feature where response text must remain hidden from bystanders.
 
-No screen scraping, OCR, conversation text, file paths, or command arguments are used. The animation works with TUI or GUI sessions that share the connected OpenCode v2 server; it does not extract words from their on-screen positions. Permission waits, disconnects, reduced motion, dragging, and hiding the mascot cancel the effect. Demo mode demonstrates a `read` capture during its working phase.
+No screen scraping, OCR, file paths, or command arguments are used. The animation works with TUI or GUI sessions that share the connected OpenCode v2 server; it does not extract words from their on-screen positions. Permission waits, disconnects, reduced motion, dragging, and hiding the mascot cancel the effect. Demo mode continuously shows example response words; right-click to reduce motion.
 
 - **Ready when you are:** connected and listening; the bubble disappears after a few seconds.
 - **Weaving code...:** faster gentle motion while a session works; hover to read the status.

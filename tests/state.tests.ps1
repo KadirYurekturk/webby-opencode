@@ -96,4 +96,8 @@ Send-Activity 'session.tool.input.started' 'grep' $now.AddSeconds(20)
 Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(27)) $null 'Discard stale activity'
 Send-Activity 'session.reasoning.delta' 'secret words' $now.AddSeconds(28)
 Assert-Equal $activity.Pending $null 'Ignore model content'
+Add-WebbyActivity $activity ([pscustomobject]@{type='session.text.delta';data=@{sessionID='s1';delta='Mer'}}) $now.AddSeconds(30)
+Assert-Equal $activity.Pending $null 'Wait for whole word'
+Add-WebbyActivity $activity ([pscustomobject]@{type='session.text.delta';data=@{sessionID='s1';delta='haba dunya '}}) $now.AddSeconds(30)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(30)).Word 'dunya' 'Display response word assembled from chunks'
 'PASS: safe activity words, pull timing, cooldown, cancellation and reduced motion'

@@ -29,6 +29,7 @@ try {
     $script:activity = New-WebbyActivity
     $script:lastDemoActivity = [datetime]::MinValue
     $script:mode = 'hanging'; $script:paused = -not [Windows.SystemParameters]::ClientAreaAnimation
+    if ($Demo) { $script:paused = $false }
     $script:frame = 0; $script:dragging = $false; $script:moved = $false; $script:hovered = $false
     $script:lastMood = ''; $script:notice = ''; $script:noticeUntil = [datetime]::MinValue
     $script:changedAt = [datetime]::UtcNow; $script:started = [datetime]::UtcNow
@@ -117,6 +118,7 @@ try {
             if ($null -ne $saved.Left -and $null -ne $saved.Top) { $window.Left = [double]$saved.Left; $window.Top = [double]$saved.Top }
         } catch { Write-WebbyLog 'Ignored invalid preferences.' }
     }
+    if ($Demo) { $script:paused = $false }
     Set-Dock $mode (Get-CurrentArea)
     $spider.Add_MouseEnter({ $script:hovered = $true }); $spider.Add_MouseLeave({ $script:hovered = $false })
     $spider.Add_MouseLeftButtonDown({
@@ -210,10 +212,12 @@ try {
             }
         }
         $mood = Get-SpiderMood $state
-        if ($Demo) { $mood = $moods[[int][math]::Floor((([datetime]::UtcNow - $started).TotalSeconds / 4)) % $moods.Count] }
+        if ($Demo) { $mood = 'working' }
         if ($Demo -and $mood -eq 'working' -and ([datetime]::UtcNow - $lastDemoActivity).TotalSeconds -ge 4) {
             $script:lastDemoActivity = [datetime]::UtcNow
-            Add-WebbyActivity $activity ([pscustomobject]@{type='session.tool.input.started';data=@{sessionID='demo';name='read'}})
+            $demoWords = @('Hello ','building ','your ','project ')
+            $demoIndex = [int][math]::Floor((([datetime]::UtcNow - $started).TotalSeconds / 4)) % $demoWords.Count
+            Add-WebbyActivity $activity ([pscustomobject]@{type='session.text.delta';data=@{sessionID='demo';delta=$demoWords[$demoIndex]}})
         }
         $activityFrame = Get-WebbyActivityFrame $activity $mood ($paused -or $dragging -or -not $window.IsVisible)
         Show-ActivityFrame $activityFrame
