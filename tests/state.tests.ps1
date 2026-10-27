@@ -40,3 +40,31 @@ Assert-Equal (Get-SpiderMood $state) 'offline' 'Disconnect clears stale state'
 Send-Event 'unknown.event'
 Assert-Equal (Get-SpiderMood $state) 'offline' 'Unknown events ignored'
 'PASS: state transitions, concurrent sessions, permissions, disconnect, result expiry'
+
+. "$PSScriptRoot/../src/Desktop.ps1"
+$fixture = Join-Path ([IO.Path]::GetTempPath()) ('webby-' + [guid]::NewGuid().ToString() + '.json')
+try {
+    '{"version":"2.2.0","url":"http://127.0.0.1:4096","password":"test-only"}' | Set-Content $fixture
+    $endpoint = Get-WebbyEndpoint '' $fixture
+    Assert-Equal $endpoint.Url 'http://127.0.0.1:4096' 'Discover registered service'
+    Assert-Equal $endpoint.Password 'test-only' 'Use registered authentication in memory'
+    '{"version":"2.2.0","url":"https://example.com","password":"test-only"}' | Set-Content $fixture
+    Assert-Equal (Get-WebbyEndpoint '' $fixture) $null 'Reject non-loopback registration'
+    '{broken json' | Set-Content $fixture
+    Assert-Equal (Get-WebbyEndpoint '' $fixture) $null 'Tolerate partial registration writes'
+    $rejected = $false
+    try { $null = Get-WebbyEndpoint 'http://user:pass@localhost:4096' '' } catch { $rejected = $true }
+    Assert-Equal $rejected $true 'Reject credentials in URL'
+    $area = @{Left=0;Right=1920;Top=0;Bottom=1040;Height=1040}
+    $dock = Get-WebbyDock 1800 40 $area 240 230
+    Assert-Equal $dock.Mode 'hanging' 'Upper half docks at top'
+    Assert-Equal $dock.Left 1680 'Clamp to work area'
+    $dock = Get-WebbyDock -20 900 $area 240 230
+    Assert-Equal $dock.Mode 'perched' 'Lower half docks above taskbar'
+    Assert-Equal $dock.Top 810 'Respect taskbar work area'
+    Assert-Equal $dock.Left 0 'Clamp left edge'
+    Write-WebbySettings $fixture @{Mode='perched';Paused=$true;Project='C:\project'}
+    $saved = Get-Content $fixture -Raw | ConvertFrom-Json
+    Assert-Equal $saved.Mode 'perched' 'Preferences round trip'
+    'PASS: service discovery, URL validation, docking and preferences'
+} finally { if (Test-Path $fixture) { Remove-Item -LiteralPath $fixture } }

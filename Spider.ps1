@@ -1,117 +1,261 @@
 param(
-    [string]$ServerUrl = 'http://127.0.0.1:4096',
-    [switch]$Demo,
-    [switch]$SmokeTest,
-    [string]$PreviewPath
+    [string]$ServerUrl, [string]$ServiceFile,
+    [string]$ProjectDirectory = (Get-Location).Path,
+    [switch]$Demo, [switch]$SmokeTest, [string]$PreviewPath
 )
 $ErrorActionPreference = 'Stop'
+$script:stream = $null; $script:tray = $null; $script:mutex = $null
+$script:ownsMutex = $false; $script:iconHandle = [IntPtr]::Zero
 try {
-    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing
     . "$PSScriptRoot/src/State.ps1"
-    $uri = [uri]$ServerUrl
-    if (-not $uri.IsLoopback -or $uri.Scheme -notin 'http','https' -or $uri.UserInfo) {
-        throw 'Use a loopback HTTP(S) URL without credentials, such as http://127.0.0.1:4096.'
-    }
+    . "$PSScriptRoot/src/Desktop.ps1"
+    Add-Type -Path "$PSScriptRoot/src/Native.cs"
     if (-not $Demo) { Add-Type -Path "$PSScriptRoot/src/EventStream.cs" }
+    if (-not $ServiceFile) { $ServiceFile = Get-WebbyServiceFile }
+    if ($ServerUrl) { $null = Get-WebbyEndpoint $ServerUrl $ServiceFile }
+    if (-not (Test-Path -LiteralPath $ProjectDirectory -PathType Container)) { throw 'Project folder does not exist.' }
+    $script:project = (Resolve-Path -LiteralPath $ProjectDirectory).Path
+    $script:settingsPath = Join-Path $env:LOCALAPPDATA 'Webby/settings.json'
+    $script:startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'Webby.lnk'
+    $script:isolated = $SmokeTest -or [bool]$PreviewPath
+    if (-not $isolated) {
+        $script:mutex = [Threading.Mutex]::new($false, 'Local\Webby.Desktop')
+        try { $script:ownsMutex = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $script:ownsMutex = $true }
+        if (-not $ownsMutex) { return }
+    }
     $script:state = New-SpiderState
-    $script:frame = 0
-    $script:paused = $false
-    $script:stream = $null
-    $script:started = [datetime]::UtcNow
+    $script:mode = 'hanging'; $script:paused = -not [Windows.SystemParameters]::ClientAreaAnimation
+    $script:frame = 0; $script:dragging = $false; $script:moved = $false; $script:hovered = $false
+    $script:lastMood = ''; $script:notice = ''; $script:noticeUntil = [datetime]::MinValue
+    $script:changedAt = [datetime]::UtcNow; $script:started = [datetime]::UtcNow
+    $script:lastDiscover = [datetime]::MinValue; $script:endpoint = $null; $script:uiFailure = $null
     $script:moods = @('idle','working','waiting','done','error','offline')
-    $script:labels = @{ idle='READY'; working='WEAVING CODE'; waiting='NEEDS YOU'; done='ALL DONE'; error='SNAG IN THE WEB'; offline='OFFLINE' }
-    $script:colors = @{ idle='#70F0C4'; working='#63D7FF'; waiting='#FFCD70'; done='#AEF789'; error='#FF8095'; offline='#8D9AAE' }
+    $script:labels = @{idle='Ready when you are';working='Weaving code...';waiting='Permission needed';done='All done!';error='Something went wrong';offline='Click to open OpenCode'}
+    $script:colors = @{idle='#91EACB';working='#80DFFF';waiting='#FFCE77';done='#B7F59A';error='#FF9BB0';offline='#B7C5D7'}
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Webby - OpenCode Spider" Width="268" Height="252"
-        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
-        Background="Transparent" Topmost="True" ShowInTaskbar="True">
-  <Border CornerRadius="20" Background="#F2131A26" BorderBrush="#344454" BorderThickness="1" Padding="17,12">
-    <Grid>
-      <Grid.RowDefinitions><RowDefinition Height="26"/><RowDefinition Height="*"/><RowDefinition Height="28"/><RowDefinition Height="23"/></Grid.RowDefinitions>
-      <TextBlock Text="WEBBY / OPENCODE" FontFamily="Consolas" FontSize="11" Foreground="#9CABC0" VerticalAlignment="Center"/>
-      <Button x:Name="CloseButton" Content="&#x00D7;" HorizontalAlignment="Right" Width="24" Background="Transparent" Foreground="#9CABC0" BorderThickness="0" ToolTip="Close"/>
-      <TextBlock x:Name="SpiderArt" Grid.Row="1" FontFamily="Consolas" FontSize="20" LineHeight="22" TextAlignment="Center" VerticalAlignment="Center" Foreground="#70F0C4"/>
-      <TextBlock x:Name="MoodLabel" Grid.Row="2" FontFamily="Consolas" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-      <TextBlock x:Name="HintLabel" Grid.Row="3" Text="drag to move / right-click" FontFamily="Consolas" FontSize="10" Foreground="#7F90A6" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-    </Grid>
-  </Border>
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Webby" Width="240" Height="230"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="{x:Null}"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False">
+  <Canvas x:Name="Scene" Background="{x:Null}">
+    <Line x:Name="Silk" X1="120" Y1="0" X2="120" Y2="112" Stroke="#7791EACB" StrokeThickness="1" IsHitTestVisible="False"/>
+    <Image x:Name="Spider" Canvas.Left="64" Canvas.Top="76" Width="112" Height="112" Stretch="Uniform"
+           RenderTransformOrigin="0.5,0.15" Focusable="True" Cursor="Hand" RenderOptions.BitmapScalingMode="NearestNeighbor"
+           AutomationProperties.Name="Webby. Open OpenCode. Drag to move; right-click for options.">
+      <Image.RenderTransform><TransformGroup><RotateTransform/><TranslateTransform/></TransformGroup></Image.RenderTransform>
+    </Image>
+    <Border x:Name="Bubble" Canvas.Left="4" Canvas.Top="192" Width="232" Height="32" CornerRadius="10"
+            Background="#F21A2230" BorderBrush="#455668" BorderThickness="1" Visibility="Collapsed" IsHitTestVisible="False">
+      <TextBlock x:Name="Status" TextAlignment="Center" VerticalAlignment="Center" FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold" Foreground="#91EACB"/>
+    </Border>
+  </Canvas>
 </Window>
 '@
-    $reader = [Xml.XmlNodeReader]::new($xaml)
-    $script:window = [Windows.Markup.XamlReader]::Load($reader)
-    $script:art = $window.FindName('SpiderArt')
-    $script:label = $window.FindName('MoodLabel')
-    $script:hint = $window.FindName('HintLabel')
+    $script:window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
+    $script:scene = $window.FindName('Scene'); $script:spider = $window.FindName('Spider')
+    $script:silk = $window.FindName('Silk'); $script:bubble = $window.FindName('Bubble'); $script:label = $window.FindName('Status')
+    $spritePath = Join-Path $PSScriptRoot 'assets/webby.png'
+    $bitmap = [Windows.Media.Imaging.BitmapImage]::new()
+    $bitmap.BeginInit(); $bitmap.CacheOption = 'OnLoad'; $bitmap.UriSource = [uri]$spritePath; $bitmap.EndInit(); $bitmap.Freeze()
+    $spider.Source = $bitmap
     $area = [Windows.SystemParameters]::WorkArea
-    $window.Left = $area.Right - $window.Width - 24
-    $window.Top = $area.Bottom - $window.Height - 24
-    $window.FindName('CloseButton').Add_Click({ $window.Close() })
-    $window.Add_MouseLeftButtonDown({ if ($_.ButtonState -eq 'Pressed') { $window.DragMove() } })
-    $menu = [Windows.Controls.ContextMenu]::new()
-    $pause = [Windows.Controls.MenuItem]::new()
-    $pause.Header = 'Pause animation'; $pause.IsCheckable = $true
-    $pause.Add_Click({ $script:paused = $this.IsChecked })
-    [void]$menu.Items.Add($pause)
-    $pin = [Windows.Controls.MenuItem]::new()
-    $pin.Header = 'Always on top'; $pin.IsCheckable = $true; $pin.IsChecked = $true
-    $pin.Add_Click({ $window.Topmost = $this.IsChecked })
-    [void]$menu.Items.Add($pin)
-    $exit = [Windows.Controls.MenuItem]::new(); $exit.Header = 'Close Webby'
-    $exit.Add_Click({ $window.Close() }); [void]$menu.Items.Add($exit)
-    $window.ContextMenu = $menu
-    $window.Add_KeyDown({ if ($_.Key -eq 'Escape') { $window.Close() } })
-    if (-not $Demo) {
-        $user = $env:OPENCODE_SERVER_USERNAME
-        if (-not $user) { $user = 'opencode' }
-        $script:stream = [SpiderEventStream]::new($ServerUrl, $user, $env:OPENCODE_PASSWORD)
+    $window.Left = $area.Right - $window.Width - 24; $window.Top = $area.Top
+    $script:scale = 1.0
+    $window.Add_SourceInitialized({
+        $source = [Windows.PresentationSource]::FromVisual($window)
+        if ($source.CompositionTarget) { $script:scale = $source.CompositionTarget.TransformFromDevice.M11 }
+    })
+    function Save-Preferences {
+        if ($isolated) { return }
+        try { Write-WebbySettings $settingsPath @{Left=$window.Left;Top=$window.Top;Mode=$mode;Paused=$paused;Topmost=$window.Topmost;Project=$project} }
+        catch { Write-WebbyLog 'Could not save preferences.' }
+    }
+    function Set-Notice([string]$Text) { $script:notice = $Text; $script:noticeUntil = [datetime]::UtcNow.AddSeconds(5) }
+    function Set-Dock([string]$DockMode, $WorkArea) {
+        $script:mode = $DockMode
+        $window.Left = [math]::Max($WorkArea.Left,[math]::Min($window.Left,$WorkArea.Right - $window.Width))
+        $window.Top = if ($mode -eq 'hanging') { $WorkArea.Top } else { $WorkArea.Bottom - $window.Height }
+        $silk.Visibility = if ($mode -eq 'hanging') { 'Visible' } else { 'Collapsed' }
+        [Windows.Controls.Canvas]::SetTop($spider, $(if ($mode -eq 'hanging') {76} else {112}))
+        [Windows.Controls.Canvas]::SetTop($bubble, $(if ($mode -eq 'hanging') {192} else {72}))
+    }
+    function Get-CurrentArea {
+        $screen = [Windows.Forms.Screen]::FromPoint([Drawing.Point]::new([int](($window.Left + 120)/$scale),[int](($window.Top + 115)/$scale)))
+        $a = $screen.WorkingArea
+        @{Left=$a.Left*$scale;Right=$a.Right*$scale;Top=$a.Top*$scale;Bottom=$a.Bottom*$scale;Height=$a.Height*$scale}
+    }
+    function Open-OpenCode {
+        if ($isolated) { Set-Notice 'OpenCode action checked'; return }
+        if ([WebbyNative]::FocusOpenCode()) { return }
+        if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { Set-Notice 'Install OpenCode v2 first'; return }
+        $launcher = Join-Path $PSScriptRoot 'src/Launch-OpenCode.ps1'
+        # Arguments are data to a fixed script, never interpolated PowerShell code.
+        $launchDirectory = if ($project.EndsWith('\')) { $project + '.' } else { $project }
+        $args = '-NoProfile -NoExit -File "' + $launcher + '" -ProjectDirectory "' + $launchDirectory + '"'
+        if ($ServerUrl) { $args += ' -ServerUrl "' + $ServerUrl + '"' }
+        try { Start-Process powershell.exe -ArgumentList $args -WindowStyle Normal | Out-Null }
+        catch { Set-Notice 'Could not open OpenCode'; Write-WebbyLog 'OpenCode launch failed.' }
+    }
+    if (-not $isolated -and (Test-Path $settingsPath)) {
+        try {
+            $saved = Get-Content $settingsPath -Raw | ConvertFrom-Json
+            if ($saved.Mode -in 'hanging','perched') { $script:mode = $saved.Mode }
+            if ($saved.Paused -is [bool]) { $script:paused = $saved.Paused -or -not [Windows.SystemParameters]::ClientAreaAnimation }
+            if ($saved.Topmost -is [bool]) { $window.Topmost = $saved.Topmost }
+            if (-not $PSBoundParameters.ContainsKey('ProjectDirectory') -and (Test-Path -LiteralPath $saved.Project -PathType Container)) { $script:project = $saved.Project }
+            if ($null -ne $saved.Left -and $null -ne $saved.Top) { $window.Left = [double]$saved.Left; $window.Top = [double]$saved.Top }
+        } catch { Write-WebbyLog 'Ignored invalid preferences.' }
+    }
+    Set-Dock $mode (Get-CurrentArea)
+    $spider.Add_MouseEnter({ $script:hovered = $true }); $spider.Add_MouseLeave({ $script:hovered = $false })
+    $spider.Add_MouseLeftButtonDown({
+        $script:dragging = $true; $script:moved = $false; $script:dragStart = [Windows.Forms.Cursor]::Position
+        $script:initialLeft = $window.Left; $script:initialTop = $window.Top
+        [void]$spider.CaptureMouse(); $_.Handled = $true
+    })
+    $spider.Add_MouseMove({
+        if (-not $dragging) { return }
+        $cursor = [Windows.Forms.Cursor]::Position
+        $dx = ($cursor.X - $dragStart.X)*$scale; $dy = ($cursor.Y - $dragStart.Y)*$scale
+        if ([math]::Abs($dx) + [math]::Abs($dy) -gt 5) { $script:moved = $true }
+        if ($moved) { $window.Left = $initialLeft + $dx; $window.Top = $initialTop + $dy }
+    })
+    $spider.Add_MouseLeftButtonUp({
+        $script:dragging = $false; $spider.ReleaseMouseCapture()
+        if ($moved) {
+            $a = Get-CurrentArea; $dock = Get-WebbyDock $window.Left $window.Top $a $window.Width $window.Height
+            Set-Dock $dock.Mode $a; Save-Preferences
+        } else { Open-OpenCode }
+        $_.Handled = $true
+    })
+    $spider.Add_LostMouseCapture({ $script:dragging = $false })
+    $spider.Add_KeyDown({ if ($_.Key -in 'Enter','Space') { Open-OpenCode; $_.Handled = $true } })
+    $script:tray = [Windows.Forms.NotifyIcon]::new()
+    $iconSource = [Drawing.Bitmap]::new($spritePath)
+    $iconBitmap = [Drawing.Bitmap]::new($iconSource,32,32); $script:iconHandle = $iconBitmap.GetHicon()
+    $tray.Icon = [Drawing.Icon]::FromHandle($iconHandle); $iconBitmap.Dispose(); $iconSource.Dispose()
+    $tray.Text = 'Webby - OpenCode companion'; $menu = [Windows.Forms.ContextMenuStrip]::new()
+    function Add-MenuItem([string]$Text, [scriptblock]$Action) {
+        $item = [Windows.Forms.ToolStripMenuItem]::new($Text); $item.Add_Click($Action)
+        [void]$menu.Items.Add($item); return $item
+    }
+    $null = Add-MenuItem 'Open OpenCode' { Open-OpenCode }
+    $null = Add-MenuItem 'Show / hide Webby' { if ($window.IsVisible) { $window.Hide() } else { $window.Show() } }
+    $null = Add-MenuItem 'Choose project folder...' {
+        $dialog = [Windows.Forms.FolderBrowserDialog]::new()
+        $dialog.Description = 'Project to open when no OpenCode window is available'; $dialog.SelectedPath = $project
+        if ($dialog.ShowDialog() -eq 'OK') { $script:project = $dialog.SelectedPath; Save-Preferences; Set-Notice 'Project folder saved' }
+        $dialog.Dispose()
+    }
+    [void]$menu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
+    $null = Add-MenuItem 'Hang from top edge' { Set-Dock 'hanging' (Get-CurrentArea); Save-Preferences }
+    $null = Add-MenuItem 'Perch above taskbar' { Set-Dock 'perched' (Get-CurrentArea); Save-Preferences }
+    $pauseItem = Add-MenuItem 'Reduce motion' { $script:paused = -not $paused; $pauseItem.Checked = $paused; Save-Preferences }
+    $pauseItem.Checked = $paused
+    $pinItem = Add-MenuItem 'Always on top' { $window.Topmost = -not $window.Topmost; $pinItem.Checked = $window.Topmost; Save-Preferences }
+    $pinItem.Checked = $window.Topmost
+    $startupItem = Add-MenuItem 'Start with Windows' {
+        try {
+            if (Test-Path -LiteralPath $startupPath) { Remove-Item -LiteralPath $startupPath }
+            else {
+                $shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut($startupPath)
+                $shortcut.TargetPath = (Join-Path $PSHOME 'powershell.exe')
+                $shortcut.Arguments = '-NoProfile -STA -WindowStyle Hidden -File "' + (Join-Path $PSScriptRoot 'Spider.ps1') + '"'
+                $shortcut.WorkingDirectory = $PSScriptRoot; $shortcut.WindowStyle = 7; $shortcut.Save()
+            }
+            $startupItem.Checked = Test-Path -LiteralPath $startupPath
+        } catch { Set-Notice 'Could not change startup'; Write-WebbyLog 'Startup shortcut update failed.' }
+    }
+    $startupItem.Checked = Test-Path -LiteralPath $startupPath
+    [void]$menu.Items.Add([Windows.Forms.ToolStripSeparator]::new())
+    $null = Add-MenuItem 'Exit Webby' { $window.Close() }
+    $tray.ContextMenuStrip = $menu; $tray.Add_DoubleClick({ $window.Show(); Open-OpenCode })
+    $spider.Add_MouseRightButtonUp({ $menu.Show([Windows.Forms.Cursor]::Position); $_.Handled = $true })
+    if (-not $isolated) { $tray.Visible = $true }
+    function Update-Connection {
+        if ($Demo -or $isolated) { return }
+        if (([datetime]::UtcNow - $lastDiscover).TotalSeconds -lt 3) { return }
+        $script:lastDiscover = [datetime]::UtcNow; $next = Get-WebbyEndpoint $ServerUrl $ServiceFile
+        $different = ($null -eq $next) -ne ($null -eq $endpoint)
+        if ($next -and $endpoint) { $different = $next.Url -ne $endpoint.Url -or $next.Password -ne $endpoint.Password -or $next.Username -ne $endpoint.Username }
+        if ($different -or ($next -and -not $stream)) {
+            if ($stream) { $stream.Dispose(); $script:stream = $null }
+            Update-SpiderState $state ([pscustomobject]@{type='transport.disconnected';data=@{}})
+            $script:endpoint = $next
+            if ($next) { $script:stream = [SpiderEventStream]::new($next.Url,$next.Username,$next.Password) }
+        }
     }
     function Update-View {
+        Update-Connection
         if ($stream) {
-            $raw = ''
-            $count = 0
+            $raw = ''; $count = 0
             while ($count -lt 100 -and $stream.Events.TryDequeue([ref]$raw)) {
                 try { Update-SpiderState $state (ConvertFrom-Json $raw) } catch { }
                 $count++
             }
-            $window.ToolTip = $stream.Status + "`n" + $ServerUrl + "`nObserves events after connection; never approves permissions."
         }
         $mood = Get-SpiderMood $state
         if ($Demo) { $mood = $moods[[int][math]::Floor((([datetime]::UtcNow - $started).TotalSeconds / 4)) % $moods.Count] }
+        if ($lastMood -ne $mood) { $script:lastMood = $mood; $script:changedAt = [datetime]::UtcNow }
         if (-not $paused) { $script:frame++ }
-        $eyes = switch ($mood) { 'waiting' { '??' }; 'done' { '^^' }; 'error' { '!!' }; 'offline' { '--' }; default { if ($frame % 16 -eq 0) { '--' } else { 'oo' } } }
-        $legs = if ($frame % 2 -eq 0 -and $mood -eq 'working') { @('  / /|  |\ \',' /_/ |__| \_\',' \ \ /  \ / /','  \_\|  |/_/') } else { @(' \ \ |  | / /','  \_\|__|/_/','  / /    \ \',' /_/      \_\') }
-        $art.Text = "      |      `n      |      `n" + $legs[0] + "`n" + $legs[1] + "`n" + "    (" + $eyes + ")    `n" + $legs[2] + "`n" + $legs[3]
-        $brush = [Windows.Media.BrushConverter]::new().ConvertFromString($colors[$mood])
-        $art.Foreground = $brush; $label.Foreground = $brush
+        $rotation = 0.0; $bob = 0.0
+        if (-not $paused -and -not $dragging) {
+            $speed = if ($mood -eq 'working') { 0.45 } else { 0.10 }
+            $rotation = [math]::Sin($frame*$speed)*$(if ($mode -eq 'hanging') {4} else {1.5})
+            if ($mood -in 'working','done') { $bob = -[math]::Abs([math]::Sin($frame*$speed))*4 }
+        }
+        $spider.RenderTransform.Children[0].Angle = $rotation; $spider.RenderTransform.Children[1].Y = $bob
+        $spider.Opacity = if ($mood -eq 'offline') {0.65} else {1.0}
+        $label.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString($colors[$mood])
         $label.Text = $labels[$mood]
-        if ($Demo) { $hint.Text = 'DEMO / right-click for options' }
-        elseif ($mood -eq 'offline') { $hint.Text = 'start OpenCode / see README' }
-        else { $hint.Text = 'drag to move / right-click' }
-        if ($SmokeTest -and ([datetime]::UtcNow - $started).TotalSeconds -gt 2) { $window.Close() }
+        if ($Demo) { $label.Text = 'Demo: ' + $label.Text }
+        $show = $hovered -or $mood -in 'waiting','done','error' -or (([datetime]::UtcNow - $changedAt).TotalSeconds -lt 5)
+        if ([datetime]::UtcNow -lt $noticeUntil) { $label.Text = $notice; $show = $true }
+        $bubble.Visibility = if ($show) {'Visible'} else {'Collapsed'}
+        $tray.Text = ('Webby: ' + $labels[$mood])
+        $spider.ToolTip = if ($stream) { $stream.Status + "`nClick: OpenCode | Drag: move | Right-click: options" } else { 'Click: OpenCode | Drag: move | Right-click: options' }
+        if ($SmokeTest -and ([datetime]::UtcNow - $started).TotalSeconds -gt 2) {
+            Set-Dock 'perched' (Get-CurrentArea)
+            if ($silk.Visibility -ne 'Collapsed') { throw 'Perch layout failed' }
+            Set-Dock 'hanging' (Get-CurrentArea)
+            if ($silk.Visibility -ne 'Visible') { throw 'Hanging layout failed' }
+            Open-OpenCode
+            if ($notice -ne 'OpenCode action checked') { throw 'Click action failed' }
+            if ($window.ShowInTaskbar -or $window.Background) { throw 'Frameless contract failed' }
+            if ($PreviewPath) { Save-Preview $PreviewPath }
+            $window.Close()
+        }
     }
+    function Save-Preview([string]$Path) {
+        $scene.Measure([Windows.Size]::new(240,230)); $scene.Arrange([Windows.Rect]::new(0,0,240,230)); $scene.UpdateLayout()
+        $render = [Windows.Media.Imaging.RenderTargetBitmap]::new(240,230,96,96,[Windows.Media.PixelFormats]::Pbgra32); $render.Render($scene)
+        $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new(); $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($render))
+        $file = [IO.File]::Create($Path)
+        try { $encoder.Save($file) } finally { $file.Dispose() }
+    }
+    $script:timer = [Windows.Threading.DispatcherTimer]::new(); $timer.Interval = [timespan]::FromMilliseconds(100)
+    $timer.Add_Tick({ try { Update-View } catch { $script:uiFailure = $_; $window.Close() } })
+    $window.Add_Closed({ $timer.Stop(); Save-Preferences })
     Update-View
-    $timer = [Windows.Threading.DispatcherTimer]::new()
-    $timer.Interval = [timespan]::FromMilliseconds(250)
-    $timer.Add_Tick({ Update-View })
-    $window.Add_Closed({ $timer.Stop(); if ($stream) { $stream.Dispose() } })
-    if ($PreviewPath) {
-        $visual = $window.Content
-        $visual.Measure([Windows.Size]::new(268,252)); $visual.Arrange([Windows.Rect]::new(0,0,268,252)); $visual.UpdateLayout()
-        $bitmap = [Windows.Media.Imaging.RenderTargetBitmap]::new(268,252,96,96,[Windows.Media.PixelFormats]::Pbgra32)
-        $bitmap.Render($visual)
-        $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
-        $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-        $file = [IO.File]::Create($PreviewPath)
-        try { $encoder.Save($file) } finally { $file.Dispose(); if ($stream) { $stream.Dispose() } }
-    } else {
-        $timer.Start()
-        [void]$window.ShowDialog()
+    if ($PreviewPath -and -not $SmokeTest) { Save-Preview $PreviewPath }
+    else {
+        $application = [Windows.Application]::new()
+        $application.ShutdownMode = 'OnMainWindowClose'
+        $timer.Start(); [void]$application.Run($window)
+        if ($uiFailure) { throw $uiFailure }
+        if ($SmokeTest) { 'PASS: frameless WPF, hanging/perched layout, isolated click and cleanup' }
     }
 } catch {
     if ($SmokeTest -or $PreviewPath) { throw }
+    Write-WebbyLog 'Application stopped after an error.'
     Add-Type -AssemblyName PresentationFramework
-    [void][Windows.MessageBox]::Show($_.Exception.Message, 'Webby could not start')
+    [void][Windows.MessageBox]::Show('Webby could not start. Check Windows PowerShell 5.1, the sprite file and your server URL. See %LOCALAPPDATA%\Webby\webby.log.', 'Webby')
     exit 1
+} finally {
+    if ($stream) { $stream.Dispose() }
+    if ($tray) { $tray.Visible = $false; $tray.Dispose() }
+    if ($iconHandle -ne [IntPtr]::Zero) { [void][WebbyNative]::DestroyIcon($iconHandle) }
+    if ($ownsMutex) { $mutex.ReleaseMutex() }
+    if ($mutex) { $mutex.Dispose() }
 }
