@@ -68,3 +68,32 @@ try {
     Assert-Equal $saved.Mode 'perched' 'Preferences round trip'
     'PASS: service discovery, URL validation, docking and preferences'
 } finally { if (Test-Path $fixture) { Remove-Item -LiteralPath $fixture } }
+
+. "$PSScriptRoot/../src/Activity.ps1"
+$activity = New-WebbyActivity
+$now = [datetime]'2026-10-27T12:00:00Z'
+function Send-Activity($type, $name, $at = $now) {
+    Add-WebbyActivity $activity ([pscustomobject]@{type=$type;data=@{sessionID='s1';name=$name;input=@{secret='must-not-render'}}}) $at
+}
+Send-Activity 'session.tool.input.started' 'read'
+$frame = Get-WebbyActivityFrame $activity 'working' $false $now
+Assert-Equal $frame.Word 'read' 'Tool name maps to safe word'
+Assert-Equal $frame.Cast 0 'Cast starts at spider'
+$frame = Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(1)
+if ($frame.Pull -le 0 -or $frame.Pull -ge 1) { throw 'Word must be pulled toward spider' }
+Send-Activity 'session.tool.input.started' 'edit' $now.AddSeconds(1)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(2)) $null 'No overlapping or rapid casts'
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(4)).Word 'edit' 'Latest event waits for cooldown'
+Assert-Equal (Get-WebbyActivityFrame $activity 'waiting' $false $now.AddSeconds(4.1)) $null 'Permission interrupts animation'
+Send-Activity 'session.tool.input.started' 'private-custom-tool-name' $now.AddSeconds(9)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(9)).Word 'tool' 'Custom names never exposed'
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $true $now.AddSeconds(9.1)) $null 'Reduced motion clears activity'
+Send-Activity 'session.reasoning.started' '' $now.AddSeconds(14)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(14)).Word 'think' 'Reasoning produces fixed label'
+Send-Activity 'session.execution.succeeded' '' $now.AddSeconds(14.2)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(14.3)) $null 'Finished session clears animation even while others work'
+Send-Activity 'session.tool.input.started' 'grep' $now.AddSeconds(20)
+Assert-Equal (Get-WebbyActivityFrame $activity 'working' $false $now.AddSeconds(27)) $null 'Discard stale activity'
+Send-Activity 'session.reasoning.delta' 'secret words' $now.AddSeconds(28)
+Assert-Equal $activity.Pending $null 'Ignore model content'
+'PASS: safe activity words, pull timing, cooldown, cancellation and reduced motion'

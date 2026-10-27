@@ -64,6 +64,16 @@ Click-to-focus is best effort: it looks for a visible terminal/OpenCode process 
 
 ## Quiet, useful status
 
+### Catching words with silk
+
+While OpenCode works, Webby casts a short silk line toward a nearby word, then reels it into the sprite. Only one word appears at a time: each capture takes 1.8 seconds, with at least four seconds between casts. A small knot briefly appears on completion.
+
+![Webby catching an activity word](docs/activity-preview.png)
+
+Words come from a fixed vocabulary based on `session.tool.input.started` and `session.reasoning.started`: `read`, `search`, `edit`, `test`, `run`, `tool`, and `think`. Shell commands are labeled `run`; Webby does not inspect their contents to infer tests. Custom tool names become `tool`. These events describe preparation/reasoning activity, not proof of a successful tool execution.
+
+No screen scraping, OCR, conversation text, file paths, or command arguments are used. The animation works with TUI or GUI sessions that share the connected OpenCode v2 server; it does not extract words from their on-screen positions. Permission waits, disconnects, reduced motion, dragging, and hiding the mascot cancel the effect. Demo mode demonstrates a `read` capture during its working phase.
+
 - **Ready when you are:** connected and listening; the bubble disappears after a few seconds.
 - **Weaving code...:** faster gentle motion while a session works; hover to read the status.
 - **Permission needed:** an amber text bubble stays visible until the request is resolved in OpenCode.
@@ -101,6 +111,7 @@ References: [v2 HTTP API](https://opencode.ai/v2/docs/api), [v2.2.0 session even
 
 - `Spider.ps1`: transparent WPF companion, animations and tray controls.
 - `src/State.ps1`: event-to-status reducer.
+- `src/Activity.ps1`: fixed activity vocabulary, animation timing and cooldown.
 - `src/Desktop.ps1`: service discovery, docking and local preferences.
 - `src/Native.cs`: Windows foreground-window helper.
 - `src/Launch-OpenCode.ps1`: explicit user-requested terminal launch.

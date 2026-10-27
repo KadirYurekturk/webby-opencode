@@ -10,6 +10,7 @@ try {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing
     . "$PSScriptRoot/src/State.ps1"
     . "$PSScriptRoot/src/Desktop.ps1"
+    . "$PSScriptRoot/src/Activity.ps1"
     Add-Type -Path "$PSScriptRoot/src/Native.cs"
     if (-not $Demo) { Add-Type -Path "$PSScriptRoot/src/EventStream.cs" }
     if (-not $ServiceFile) { $ServiceFile = Get-WebbyServiceFile }
@@ -25,6 +26,8 @@ try {
         if (-not $ownsMutex) { return }
     }
     $script:state = New-SpiderState
+    $script:activity = New-WebbyActivity
+    $script:lastDemoActivity = [datetime]::MinValue
     $script:mode = 'hanging'; $script:paused = -not [Windows.SystemParameters]::ClientAreaAnimation
     $script:frame = 0; $script:dragging = $false; $script:moved = $false; $script:hovered = $false
     $script:lastMood = ''; $script:notice = ''; $script:noticeUntil = [datetime]::MinValue
@@ -40,6 +43,11 @@ try {
         Topmost="True" ShowInTaskbar="False" ShowActivated="False">
   <Canvas x:Name="Scene" Background="{x:Null}">
     <Line x:Name="Silk" X1="120" Y1="0" X2="120" Y2="112" Stroke="#7791EACB" StrokeThickness="1" IsHitTestVisible="False"/>
+    <Line x:Name="CastWeb" Stroke="#C591EACB" StrokeThickness="1" Visibility="Collapsed" IsHitTestVisible="False"/>
+    <TextBlock x:Name="CaughtWord" Width="64" TextAlignment="Center" FontFamily="Consolas" FontSize="13"
+               FontWeight="Bold" Foreground="#91EACB" Visibility="Collapsed" IsHitTestVisible="False"/>
+    <Ellipse x:Name="WebKnot" Canvas.Left="115" Width="10" Height="10" Stroke="#B7F59A" StrokeThickness="2"
+             Visibility="Collapsed" IsHitTestVisible="False"/>
     <Image x:Name="Spider" Canvas.Left="64" Canvas.Top="76" Width="112" Height="112" Stretch="Uniform"
            RenderTransformOrigin="0.5,0.15" Focusable="True" Cursor="Hand" RenderOptions.BitmapScalingMode="NearestNeighbor"
            AutomationProperties.Name="Webby. Open OpenCode. Drag to move; right-click for options.">
@@ -55,6 +63,8 @@ try {
     $script:window = [Windows.Markup.XamlReader]::Load([Xml.XmlNodeReader]::new($xaml))
     $script:scene = $window.FindName('Scene'); $script:spider = $window.FindName('Spider')
     $script:silk = $window.FindName('Silk'); $script:bubble = $window.FindName('Bubble'); $script:label = $window.FindName('Status')
+    $script:castWeb = $window.FindName('CastWeb'); $script:caughtWord = $window.FindName('CaughtWord')
+    $script:webKnot = $window.FindName('WebKnot')
     $spritePath = Join-Path $PSScriptRoot 'assets/webby.png'
     $bitmap = [Windows.Media.Imaging.BitmapImage]::new()
     $bitmap.BeginInit(); $bitmap.CacheOption = 'OnLoad'; $bitmap.UriSource = [uri]$spritePath; $bitmap.EndInit(); $bitmap.Freeze()
@@ -191,13 +201,26 @@ try {
         if ($stream) {
             $raw = ''; $count = 0
             while ($count -lt 100 -and $stream.Events.TryDequeue([ref]$raw)) {
-                try { Update-SpiderState $state (ConvertFrom-Json $raw) } catch { }
+                try {
+                    $event = ConvertFrom-Json $raw
+                    Update-SpiderState $state $event
+                    Add-WebbyActivity $activity $event
+                } catch { }
                 $count++
             }
         }
         $mood = Get-SpiderMood $state
         if ($Demo) { $mood = $moods[[int][math]::Floor((([datetime]::UtcNow - $started).TotalSeconds / 4)) % $moods.Count] }
+        if ($Demo -and $mood -eq 'working' -and ([datetime]::UtcNow - $lastDemoActivity).TotalSeconds -ge 4) {
+            $script:lastDemoActivity = [datetime]::UtcNow
+            Add-WebbyActivity $activity ([pscustomobject]@{type='session.tool.input.started';data=@{sessionID='demo';name='read'}})
+        }
+        $activityFrame = Get-WebbyActivityFrame $activity $mood ($paused -or $dragging -or -not $window.IsVisible)
+        Show-ActivityFrame $activityFrame
+        $timer.Interval = [timespan]::FromMilliseconds($(if ($activityFrame) {50} else {100}))
         if ($lastMood -ne $mood) { $script:lastMood = $mood; $script:changedAt = [datetime]::UtcNow }
+        $webKnot.Visibility = if ($mood -eq 'done' -and -not $paused -and ([datetime]::UtcNow - $changedAt).TotalSeconds -lt 2) { 'Visible' } else { 'Collapsed' }
+        [Windows.Controls.Canvas]::SetTop($webKnot,([Windows.Controls.Canvas]::GetTop($spider) + 20))
         if (-not $paused) { $script:frame++ }
         $rotation = 0.0; $bob = 0.0
         if (-not $paused -and -not $dragging) {
@@ -216,6 +239,11 @@ try {
         $tray.Text = ('Webby: ' + $labels[$mood])
         $spider.ToolTip = if ($stream) { $stream.Status + "`nClick: OpenCode | Drag: move | Right-click: options" } else { 'Click: OpenCode | Drag: move | Right-click: options' }
         if ($SmokeTest -and ([datetime]::UtcNow - $started).TotalSeconds -gt 2) {
+            Show-ActivityFrame @{Word='search';Cast=1.0;Pull=0.4;Opacity=1.0}
+            if ($caughtWord.Text -ne 'search' -or $castWeb.Visibility -ne 'Visible') { throw 'Word capture layout failed' }
+            if ($PreviewPath) { Save-Preview $PreviewPath }
+            Show-ActivityFrame $null
+            if ($caughtWord.Visibility -ne 'Collapsed') { throw 'Word capture cleanup failed' }
             Set-Dock 'perched' (Get-CurrentArea)
             if ($silk.Visibility -ne 'Collapsed') { throw 'Perch layout failed' }
             Set-Dock 'hanging' (Get-CurrentArea)
@@ -223,9 +251,25 @@ try {
             Open-OpenCode
             if ($notice -ne 'OpenCode action checked') { throw 'Click action failed' }
             if ($window.ShowInTaskbar -or $window.Background) { throw 'Frameless contract failed' }
-            if ($PreviewPath) { Save-Preview $PreviewPath }
             $window.Close()
         }
+    }
+    function Show-ActivityFrame($Frame) {
+        if (-not $Frame) {
+            $castWeb.Visibility = 'Collapsed'; $caughtWord.Visibility = 'Collapsed'
+            return
+        }
+        $bodyY = [Windows.Controls.Canvas]::GetTop($spider) + 56
+        $wordX = 190 + (120 - 190)*$Frame.Pull
+        $wordY = ($bodyY - 50) + 50*$Frame.Pull
+        $castWeb.X1 = 120; $castWeb.Y1 = $bodyY
+        $castWeb.X2 = 120 + ($wordX - 120)*$Frame.Cast
+        $castWeb.Y2 = $bodyY + ($wordY - $bodyY)*$Frame.Cast
+        $castWeb.Opacity = $Frame.Opacity
+        $caughtWord.Text = $Frame.Word; $caughtWord.Opacity = $Frame.Opacity
+        [Windows.Controls.Canvas]::SetLeft($caughtWord,$wordX - 32)
+        [Windows.Controls.Canvas]::SetTop($caughtWord,$wordY - 9)
+        $castWeb.Visibility = 'Visible'; $caughtWord.Visibility = 'Visible'
     }
     function Save-Preview([string]$Path) {
         $scene.Measure([Windows.Size]::new(240,230)); $scene.Arrange([Windows.Rect]::new(0,0,240,230)); $scene.UpdateLayout()
