@@ -1,0 +1,62 @@
+[
+  {"name":"idle scenes, alternating actions and sleep", "steps":[
+    {"time":0,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":44,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":45,"mood":"idle","expect":{"scene":"clean"}},
+    {"time":47,"mood":"idle","expect":{"scene":"clean"}},
+    {"time":49,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":94,"mood":"idle","expect":{"scene":"tug","thread":true}},
+    {"time":98,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":183,"mood":"idle","expect":{"scene":"sleep","sleep":1}},
+    {"time":184,"mood":"working","expect":{"scene":"weave","sleep":0}},
+    {"time":185,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":229,"mood":"idle","expect":{"scene":"rest"}}
+  ]},
+  {"name":"reasoning builds a bounded web, reply retains it, completion collects", "steps":[
+    {"time":0,"event":"session.reasoning.started","session":"a"},
+    {"time":0,"mood":"working","expect":{"scene":"think","web":0}},
+    {"time":4,"mood":"working","expect":{"scene":"think","web":0.5}},
+    {"time":8,"mood":"working","expect":{"web":1}},
+    {"time":100,"mood":"working","expect":{"web":1}},
+    {"time":101,"event":"session.text.delta","session":"a"},
+    {"time":101,"mood":"working","expect":{"scene":"weave","web":1}},
+    {"time":102,"event":"session.execution.succeeded","session":"a"},
+    {"time":102,"mood":"done","expect":{"scene":"collect","web":1}},
+    {"time":103.5,"mood":"done","expect":{"web":0.5}},
+    {"time":105,"mood":"done","expect":{"scene":"rest","web":0}}
+  ]},
+  {"name":"one session replying does not stop another thinking", "steps":[
+    {"time":0,"event":"session.reasoning.started","session":"a"},
+    {"time":1,"event":"session.reasoning.started","session":"b"},
+    {"time":2,"event":"session.text.delta","session":"a"},
+    {"time":3,"mood":"working","expect":{"scene":"think"}},
+    {"time":4,"event":"session.tool.input.started","session":"b"},
+    {"time":4,"mood":"working","expect":{"scene":"weave"}}
+  ]},
+  {"name":"permission and disconnect cancel decorations", "steps":[
+    {"time":0,"event":"session.reasoning.started","session":"a"},
+    {"time":8,"mood":"working","expect":{"web":1}},
+    {"time":9,"mood":"waiting","expect":{"scene":"rest","web":0,"thread":false}},
+    {"time":10,"mood":"working","expect":{"scene":"weave","web":0}},
+    {"time":11,"event":"session.reasoning.started","session":"a"},
+    {"time":19,"mood":"working","expect":{"web":1}},
+    {"time":20,"event":"transport.disconnected"},
+    {"time":20,"mood":"offline","expect":{"scene":"rest","web":0}}
+  ]},
+  {"name":"reduced motion, drag, hover and hide cancel and restart idle delay", "steps":[
+    {"time":0,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":46,"mood":"idle","expect":{"scene":"clean"}},
+    {"time":47,"mood":"idle","blocked":true,"expect":{"scene":"rest","left":0,"right":0,"web":0}},
+    {"time":100,"mood":"idle","blocked":true,"expect":{"scene":"rest"}},
+    {"time":101,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":145,"mood":"idle","expect":{"scene":"rest"}},
+    {"time":146,"mood":"idle","expect":{"scene":"tug"}}
+  ]},
+  {"name":"interrupted work collects its web without a success event", "steps":[
+    {"time":0,"event":"session.reasoning.started","session":"a"},
+    {"time":8,"mood":"working","expect":{"web":1}},
+    {"time":9,"event":"session.execution.interrupted","session":"a"},
+    {"time":9,"mood":"idle","expect":{"scene":"collect","web":1}},
+    {"time":12,"mood":"idle","expect":{"scene":"rest","web":0}}
+  ]}
+]

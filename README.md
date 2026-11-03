@@ -6,8 +6,17 @@ A small **OpenCode v2** desktop companion for Windows, Ubuntu and macOS. A mint-
 
 ## Install as an OpenCode v2 plugin
 
-1. Download the archive for your platform from [Releases](https://github.com/kadiryurekturk/webby-opencode/releases) or clone the repository, and keep it in a permanent folder, for example `C:/Tools/webby-opencode` on Windows.
-2. Add that **directory** to the `plugins` array in the project's `opencode.json`, or in `%USERPROFILE%\.config\opencode\opencode.json` for global use. Create the file if needed; keep existing settings and plugins:
+Install directly from GitHub with OpenCode 2.2.5:
+
+```sh
+opencode plugin add github:KadirYurekturk/webby-opencode
+opencode reload
+opencode plugin list
+```
+
+Once activation finishes, the list includes `webby` and the installed Git revision. Update with `opencode plugin update github:KadirYurekturk/webby-opencode`, then reload. OpenCode Desktop uses the same global server plugin configuration.
+
+For local development, clone the repository into a permanent folder and add its absolute directory URI to the `plugins` array in `~/.config/opencode/opencode.json` (`%USERPROFILE%\.config\opencode\opencode.json` on Windows). Keep existing settings and plugins. Use **one** installation method to avoid duplicate `webby` IDs:
 
 ```json
 {
@@ -15,21 +24,19 @@ A small **OpenCode v2** desktop companion for Windows, Ubuntu and macOS. A mint-
 }
 ```
 
-Replace the URI with the absolute folder containing `index.js` and `Spider.ps1`. Use the `file:///` prefix and forward slashes on Windows; encode spaces as `%20`. JSON strings must have exactly one pair of double quotes. For example, `file:///C:/Users/Zims/.webby-opencode` is a valid local plugin URI. Restart OpenCode after editing the configuration. Webby starts when the plugin loads; no separate CMD or server password is needed. OpenCode Desktop loads globally configured server plugins; CLI project configuration applies to that project.
-
-On Ubuntu and macOS, extract the respective release archive and use an absolute URI such as `file:///home/you/.webby-opencode` or `file:///Users/you/.webby-opencode`. The global config is `~/.config/opencode/opencode.json` (or `$XDG_CONFIG_HOME/opencode/opencode.json` when set). Local paths and `file:///` directory URIs are supported by the v2 loader; the latter was verified with OpenCode 2.2.0 on Windows.
+On Linux use, for example, `file:///home/you/webby-opencode`; on macOS use `file:///Users/you/webby-opencode`. Encode spaces as `%20`. `XDG_CONFIG_HOME`, when set, overrides the default configuration directory. Run `opencode reload` after editing the config. Webby starts with the plugin; no separate CMD or server password is needed.
 
 Ubuntu needs Python 3, Tkinter, GTK/X11 desktop libraries and an X11 display (including XWayland). Install the standard Tk package with `sudo apt install python3 python3-tk`. For macOS install Python 3 with Tk support; verify with `python3 -c 'import tkinter'`. The executable must be available as `python3` in the OpenCode server's PATH. Headless servers and remote servers do not display a mascot on the local computer.
 
 The plugin starts a local desktop companion and subscribes to the v2 event API over an in-memory local pipe. OpenCode may keep its shared server running after a TUI closes, so Webby follows the plugin/server lifetime, not necessarily one terminal window. On Windows, quit using the tray menu or unload the plugin; exit an older standalone/demo instance before enabling it. The Windows single-instance lock means the first active location owns the mascot. Ubuntu/macOS use right-click (or two-finger click) and Close Webby or Escape; each loaded location may launch an instance.
 
-This is a local-directory plugin, not an npm-published package. Its dependency-free v2 `{ id, setup }` object is equivalent to `Plugin.define` and avoids local `@opencode/plugin` resolution failures in some releases. See the [v2 server plugin documentation](https://opencode.ai/v2/docs/build/plugins/server/) and [v2.2.0 test plugin](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/server/test/fixture/worktree-plugin/index.ts).
+Webby supports Git package and local-directory installation; it is not published to npm. Its dependency-free v2 `{ id, setup }` object is equivalent to `Plugin.define` and avoids local `@opencode/plugin` resolution failures in some releases. See the [v2 server plugin documentation](https://opencode.ai/v2/docs/build/plugins/server/) and [v2.2.0 test plugin](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/server/test/fixture/worktree-plugin/index.ts).
 
 ## Standalone and demo
 
 `Start-Spider.cmd` remains available for standalone use. Right-click the spider or its system tray icon and choose **Choose project folder...** for the terminal-launch action.
 
-**Demo.cmd** cycles through the visual states without connecting to OpenCode. If Webby is already running, exit it from the tray before starting the demo; only one interactive instance runs at a time.
+**Demo.cmd** cycles through cleaning, silk checking, dozing, thinking/weaving and collecting without connecting to OpenCode. On Linux/macOS run `python3 src/desktop.py --demo` in a desktop session. If Webby is already running, exit it from the tray before starting the demo; only one interactive instance runs at a time.
 
 **Windows requirements:** Windows 10/11 desktop, built-in **Windows PowerShell 5.1**, WPF/.NET Framework, and OpenCode v2 for live status. No Python, Node.js, Electron, npm packages, or separate compiler installation is required for Webby on Windows. Its small C# helpers compile in memory using `Add-Type`.
 Use `powershell.exe`, not PowerShell 7. Organizational restrictions on PowerShell or `Add-Type` may prevent startup.
@@ -101,7 +108,13 @@ No screen scraping, OCR, file paths, or command arguments are used. The animatio
 - **All done! / Something went wrong:** completion or failure appears for eight seconds.
 - **Click to open OpenCode:** disconnected; the sprite dims and the connection retries automatically.
 
-The mascot does not move across your work on its own or take keyboard focus when status changes. Waiting for permission takes priority over other active sessions. Windows' animation preference is respected on startup. Motion uses a small sprite transform, not separately animated legs or a walking simulation.
+### Little theatre
+
+Webby's front pair of legs now moves independently while the original pixel sprite remains intact. Reasoning events start a small web beside the mascot, in the upper-right corner of its own 240×230 scene. It grows over eight seconds, stays bounded, and is reeled away over three seconds when work finishes. Reply/tool activity uses alternating leg movements; response-word catching remains available. The web does not locate or cover the actual thinking/chat panels.
+
+When connected and idle, Webby waits 45 seconds before a brief leg-cleaning scene. Cleaning and silk checking alternate, with 45–57 quiet seconds between scenes; each lasts at most 3.2 seconds. After three uninterrupted idle minutes, the eyes close and Webby gently dozes. Work wakes it immediately. Hovering, dragging, hiding (Windows), reduced motion, permission waits, errors and disconnects cancel theatre effects. Leaving idle restarts the idle delay. Decorations do not capture mouse clicks.
+
+The mascot stays in its chosen position and does not take keyboard focus when status changes. Waiting for permission takes priority over other active sessions. Windows' animation preference is respected on startup. There is no screen scraping, autonomous walking, or conversation text stored by the theatre scheduler.
 
 ## Limits and privacy
 
@@ -141,6 +154,21 @@ References: [v2 HTTP API](https://opencode.ai/v2/docs/api), [v2.2.0 session even
 - `src/EventStream.cs`: background SSE transport.
 - `index.js` and `src/PluginStream.cs`: v2 plugin lifecycle and local event pipe.
 - `src/desktop.py`: Ubuntu/macOS Tk companion; no pip packages.
+- `src/Theatre.ps1`, `src/theatre.py`: interruptible stage directions and bounded web geometry.
+- `src/TheatreView.ps1`: Windows leg, eyelid and silk rendering.
 - `assets/webby.png`: generated transparent pixel sprite.
 
 MIT licensed.
+
+Theatre verification (no model requests):
+
+```sh
+python3 tests/theatre.tests.py
+pwsh -NoProfile -File tests/theatre.tests.ps1
+# Optional cross-platform frame parity:
+WEBBY_PWSH=pwsh python3 tests/theatre.tests.py
+# In an X11 desktop session:
+python3 tests/desktop_unix.tests.py
+```
+
+The shared scenarios cover idle spacing, wake-up, concurrent reasoning sessions, web collection and cancellation. Native Windows WPF and macOS desktop rendering still require checks on those operating systems.

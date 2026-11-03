@@ -11,6 +11,8 @@ try {
     . "$PSScriptRoot/src/State.ps1"
     . "$PSScriptRoot/src/Desktop.ps1"
     . "$PSScriptRoot/src/Activity.ps1"
+    . "$PSScriptRoot/src/Theatre.ps1"
+    . "$PSScriptRoot/src/TheatreView.ps1"
     Add-Type -Path "$PSScriptRoot/src/Native.cs"
     if ($PluginMode) { [Console]::InputEncoding = [Text.UTF8Encoding]::new($false); Add-Type -Path "$PSScriptRoot/src/PluginStream.cs" }
     elseif (-not $Demo) { Add-Type -Path "$PSScriptRoot/src/EventStream.cs" }
@@ -28,6 +30,8 @@ try {
     }
     $script:state = New-SpiderState
     $script:activity = New-WebbyActivity
+    $script:theatre = New-WebbyTheatre
+    $script:theatreClock = [Diagnostics.Stopwatch]::StartNew()
     $script:lastDemoActivity = [datetime]::MinValue
     $script:mode = 'hanging'; $script:paused = -not [Windows.SystemParameters]::ClientAreaAnimation
     if ($Demo) { $script:paused = $false }
@@ -71,6 +75,7 @@ try {
     $bitmap = [Windows.Media.Imaging.BitmapImage]::new()
     $bitmap.BeginInit(); $bitmap.CacheOption = 'OnLoad'; $bitmap.UriSource = [uri]$spritePath; $bitmap.EndInit(); $bitmap.Freeze()
     $spider.Source = $bitmap
+    Initialize-WebbyTheatreView
     $area = [Windows.SystemParameters]::WorkArea
     $window.Left = $area.Right - $window.Width - 24; $window.Top = $area.Top
     $script:scale = 1.0
@@ -209,20 +214,23 @@ try {
                     $event = ConvertFrom-Json $raw
                     Update-SpiderState $state $event
                     Add-WebbyActivity $activity $event
+                    Add-WebbyTheatreEvent $theatre $event $theatreClock.Elapsed.TotalSeconds
                 } catch { }
                 $count++
             }
             if ($PluginMode -and $stream.Closed) { $window.Close(); return }
         }
         $mood = Get-SpiderMood $state
-        if ($Demo) { $mood = 'working' }
+        if ($Demo) { $demoStage=Get-WebbyTheatreDemo $theatreClock.Elapsed.TotalSeconds; $mood=$demoStage.Mood }
         if ($Demo -and $mood -eq 'working' -and ([datetime]::UtcNow - $lastDemoActivity).TotalSeconds -ge 4) {
             $script:lastDemoActivity = [datetime]::UtcNow
             $demoWords = @('Hello ','building ','your ','project ')
             $demoIndex = [int][math]::Floor((([datetime]::UtcNow - $started).TotalSeconds / 4)) % $demoWords.Count
             Add-WebbyActivity $activity ([pscustomobject]@{type='session.text.delta';data=@{sessionID='demo';delta=$demoWords[$demoIndex]}})
         }
-        $activityFrame = Get-WebbyActivityFrame $activity $mood ($paused -or $dragging -or -not $window.IsVisible)
+        $stageFrame = Get-WebbyTheatreFrame $theatre $mood $theatreClock.Elapsed.TotalSeconds ($paused -or $dragging -or $hovered -or -not $window.IsVisible)
+        if ($Demo -and -not ($paused -or $dragging -or $hovered -or -not $window.IsVisible)) { $stageFrame=$demoStage.Frame }
+        $activityFrame = Get-WebbyActivityFrame $activity $mood ($paused -or $dragging -or $hovered -or -not $window.IsVisible)
         Show-ActivityFrame $activityFrame
         $timer.Interval = [timespan]::FromMilliseconds($(if ($activityFrame) {50} else {100}))
         if ($lastMood -ne $mood) { $script:lastMood = $mood; $script:changedAt = [datetime]::UtcNow }
@@ -232,9 +240,12 @@ try {
         $rotation = 0.0; $bob = 0.0
         if (-not $paused -and -not $dragging) {
             $speed = if ($mood -eq 'working') { 0.45 } else { 0.10 }
-            $rotation = [math]::Sin($frame*$speed)*$(if ($mode -eq 'hanging') {4} else {1.5})
+            # Keep the body aligned with the independently drawn front legs.
+            $rotation = 0.0
             if ($mood -in 'working','done') { $bob = -[math]::Abs([math]::Sin($frame*$speed))*4 }
         }
+        $bob += $stageFrame.Bob
+        Show-WebbyTheatreFrame $stageFrame $bob
         $spider.RenderTransform.Children[0].Angle = $rotation; $spider.RenderTransform.Children[1].Y = $bob
         $spider.Opacity = if ($mood -eq 'offline') {0.65} else {1.0}
         $label.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString($colors[$mood])
@@ -248,7 +259,16 @@ try {
         if ($SmokeTest -and ([datetime]::UtcNow - $started).TotalSeconds -gt 2) {
             Show-ActivityFrame @{Word='search';Cast=1.0;Pull=0.4;Opacity=1.0}
             if ($caughtWord.Text -ne 'search' -or $castWeb.Visibility -ne 'Visible') { throw 'Word capture layout failed' }
+            $sample=Get-WebbyTheatreDemo 19
+            Show-WebbyTheatreFrame $sample.Frame 0
+            if ($theatreShapes.Count -lt 5 -or -not $spider.Clip) { throw 'Theatre layout failed' }
+            foreach ($shape in $theatreShapes) { if ($shape.IsHitTestVisible) { throw 'Theatre decoration captured input' } }
             if ($PreviewPath) { Save-Preview $PreviewPath }
+            $sample=Get-WebbyTheatreDemo 11
+            Show-WebbyTheatreFrame $sample.Frame 0
+            if ($theatreShapes.Count -ne 6) { throw 'Sleep eyelids missing' }
+            Show-WebbyTheatreFrame (Get-WebbyTheatreFrame (New-WebbyTheatre) idle 0) 0
+            if ($theatreShapes.Count -ne 4) { throw 'Theatre cleanup failed' }
             Show-ActivityFrame $null
             if ($caughtWord.Visibility -ne 'Collapsed') { throw 'Word capture cleanup failed' }
             Set-Dock 'perched' (Get-CurrentArea)
